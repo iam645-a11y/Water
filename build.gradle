@@ -1,4 +1,6 @@
-plugins { id 'com.android.application' }
+plugins {
+    id 'com.android.application' version '8.5.2'
+}
 android { namespace 'ye.bills.app'; compileSdk 35
  defaultConfig { applicationId 'ye.bills.app'; minSdk 24; targetSdk 28; versionCode 1; versionName '1.0' }
 }
