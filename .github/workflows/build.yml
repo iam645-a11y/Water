@@ -1,4 +1,3 @@
-
 name: Build YemenBills APK
 
 on:
@@ -21,25 +20,44 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      
-      - name: Configure Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ls "$ANDROID_HOME/platforms"
-          ls "$ANDROID_HOME/build-tools"
-
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build APK
-        run: gradle :app:assembleDebug --stacktrace
+      - name: Build unsigned release APK
+        run: gradle :app:assembleRelease --stacktrace
 
-      - name: Upload APK
+      - name: Sign release APK
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY_BASE64" || { echo 'Missing SIGNING_KEY_BASE64 secret'; exit 1; }
+          test -n "$SIGNING_STORE_PASSWORD" || { echo 'Missing SIGNING_STORE_PASSWORD secret'; exit 1; }
+          KEYSTORE="$RUNNER_TEMP/water-bills-release.jks"
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          UNSIGNED_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
+          ALIGNED_APK="$RUNNER_TEMP/app-release-aligned.apk"
+          SIGNED_APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$UNSIGNED_APK" || { echo 'Unsigned release APK not found'; exit 1; }
+          "$BUILD_TOOLS/zipalign" -f -p 4 "$UNSIGNED_APK" "$ALIGNED_APK"
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias waterbills \
+            --ks-pass env:SIGNING_STORE_PASSWORD \
+            --key-pass env:SIGNING_STORE_PASSWORD \
+            --out "$SIGNED_APK" \
+            "$ALIGNED_APK"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$SIGNED_APK"
+          rm -f "$KEYSTORE" "$ALIGNED_APK"
+
+      - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: YemenBills-APK
-          path: app/build/outputs/apk/debug/*.apk
+          name: YemenBills-Signed-APK
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
