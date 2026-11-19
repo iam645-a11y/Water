@@ -17,10 +17,11 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends Activity {
-  private static final int CONTACT=20, SAVE=21, OPEN=22;
+  private static final int CONTACT=20, SAVE=21, OPEN=22, EXCEL=23;
   private WebView web;
   private int contactIndex=-1;
   private String pendingBackup="";
+  private String pendingExcel="";
   private ValueCallback<Uri[]> uploadCallback;
 
   @Override public void onCreate(Bundle b){
@@ -65,6 +66,17 @@ public class MainActivity extends Activity {
   private void js(String script){runOnUiThread(()->web.evaluateJavascript(script,null));}
 
   public class Bridge {
+    @JavascriptInterface public void saveExcel(String base64){
+      runOnUiThread(()->{
+        pendingExcel=base64;
+        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        i.putExtra(Intent.EXTRA_TITLE,"yemen-bills.xlsx");
+        try{startActivityForResult(i,EXCEL);}catch(Exception e){pendingExcel="";toast("تعذر فتح نافذة حفظ Excel");}
+      });
+    }
+
     @JavascriptInterface public void chooseContact(int index){
       contactIndex=index;
       runOnUiThread(()->{
@@ -95,6 +107,15 @@ public class MainActivity extends Activity {
     }
     if(result!=RESULT_OK||data==null||data.getData()==null)return;
     Uri uri=data.getData();
+    if(request==EXCEL){
+      try(OutputStream out=getContentResolver().openOutputStream(uri)){
+        if(out==null)throw new Exception("No output stream");
+        out.write(android.util.Base64.decode(pendingExcel,android.util.Base64.DEFAULT));
+        toast("تم حفظ ملف Excel");
+      }catch(Exception e){toast("فشل حفظ Excel");}
+      finally{pendingExcel="";}
+      return;
+    }
     if(request==SAVE){
       try(OutputStream out=getContentResolver().openOutputStream(uri)){
         if(out==null)throw new Exception("No output stream");
