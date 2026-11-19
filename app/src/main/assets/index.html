@@ -39,4 +39,42 @@ window.renderReports=function(){const rows=rowsForReport(),sum=k=>rows.reduce((a
 window.exportReportCsv=function(){const rows=rowsForReport();const lines=[['التاريخ','الاستهلاك','الكهرباء (ريال)','الماء (ريال)','الإجمالي (ريال)'],...rows.map(r=>[r.date,r.units,r.power.toFixed(2),r.water.toFixed(2),r.total.toFixed(2)])];const csv='\uFEFF'+lines.map(row=>row.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(',')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='water-electricity-report.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000)};
 renderDashboard();renderCurrentStats();
 })();
+</script><style id="payment-theme">
+.payment-line{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:12px 0;padding:12px;border:1px solid #355777;border-radius:13px;background:#0b1c33}.payment-badge{padding:6px 12px;border-radius:999px;font-weight:800;font-size:13px}.payment-badge.paid{background:#0b684c;color:#d4fff0}.payment-badge.unpaid{background:#643044;color:#ffe0e5}.payment-line button{padding:9px 12px;min-height:40px}.payment-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:13px 0}.payment-summary>div{padding:14px;background:#102b46;border:1px solid #315777;border-radius:14px}.payment-summary small{display:block;color:#b8d2e9}.payment-summary strong{font-size:19px;color:white}.payment-history{border-top:1px solid #355777;padding:10px 0}.payment-history .payment-line{margin:5px 0}
+</style>
+<script id="payments-feature">
+(function(){
+'use strict';
+// Each invoice stores its own payment states; the existing JSON backup includes db.records.
+function ensurePayments(record){if(!record)return [];if(!Array.isArray(record.payments))record.payments=[];return record.payments}
+function paid(ri,pi){return !!db.records[ri]?.payments?.[pi]?.paid}
+function paymentDate(ri,pi){return db.records[ri]?.payments?.[pi]?.date||''}
+function changePayment(ri,pi){
+ const record=db.records[ri];if(!record||!db.people[pi])return;
+ const wasPaid=paid(ri,pi),name=db.people[pi].name||'المستفيد';
+ if(!confirm(wasPaid?'إعادة فاتورة '+name+' بتاريخ '+record.date+' إلى غير مسدد؟':'تأكيد استلام كامل مبلغ فاتورة '+name+' بتاريخ '+record.date+'؟'))return;
+ const entries=ensurePayments(record),previous=entries[pi];entries[pi]={paid:!wasPaid,date:wasPaid?'':new Date().toISOString()};
+ try{store()}catch(e){alert('تعذر حفظ حالة السداد. تحقق من مساحة التخزين.');entries[pi]=previous;return}
+ refreshPaymentViews();
+}
+window.changePayment=changePayment;
+function statusMarkup(ri,pi){const isPaid=paid(ri,pi);return '<div class="payment-line"><span class="payment-badge '+(isPaid?'paid':'unpaid')+'">'+(isPaid?'✓ تم السداد':'◷ غير مسدد')+'</span><button class="'+(isPaid?'secondary':'green')+'" onclick="changePayment('+ri+','+pi+')">'+(isPaid?'إلغاء السداد':'تسجيل تم السداد')+'</button>'+(isPaid&&paymentDate(ri,pi)?'<small>تاريخ التسجيل: '+esc(paymentDate(ri,pi).slice(0,10))+'</small>':'')+'</div>'}
+function renderPaymentDashboard(){const card=$('dashboardCard');if(!card||!db.records.length||!db.people.length)return;
+ const month=$('dashboardMonth')?.textContent||'';const ri=db.records.findIndex(r=>month.includes(new Intl.DateTimeFormat('ar',{month:'long',year:'numeric'}).format(new Date(Number(r.date.slice(0,4)),Number(r.date.slice(5,7))-1,1))));
+ const selected=ri>=0?ri:db.records.length-1;
+ const indicator=$('dashboardIndex')?.textContent||'1 / 1';const pi=Math.max(0,Number(indicator.split('/')[0])-1);
+ card.querySelector('.payment-line')?.remove();card.querySelector('.dash-person')?.insertAdjacentHTML('beforeend',statusMarkup(selected,pi));
+}
+const oldMonth=window.moveDashboardMonth,oldPerson=window.moveDashboardPerson,oldGo=window.go,oldDetails=window.showDetails,oldReports=window.renderReports;
+window.moveDashboardMonth=function(step){oldMonth(step);renderPaymentDashboard()};
+window.moveDashboardPerson=function(step){oldPerson(step);renderPaymentDashboard()};
+window.go=function(id){oldGo(id);if(id==='home')renderPaymentDashboard();if(id==='reports')appendReportPayments()};
+window.showDetails=function(ri){oldDetails(ri);const target=$('detail'+ri);if(!target)return;target.insertAdjacentHTML('beforeend','<h3>حالة السداد لكل مستفيد</h3>'+db.people.map((p,pi)=>'<div class="payment-history"><b>'+esc(p.name||'مستفيد')+'</b>'+statusMarkup(ri,pi)+'</div>').join(''))};
+function appendReportPayments(){const content=$('reportContent');if(!content)return;content.querySelector('#paymentReportSummary')?.remove();const from=$('reportFrom').value,to=$('reportTo').value,who=$('reportPerson').value;let yes=0,no=0,yesCount=0,noCount=0;
+ db.records.forEach((r,ri)=>{if(from&&r.date<from||to&&r.date>to)return;const amounts=compute(r,db.records[ri-1]).items;db.people.forEach((p,pi)=>{if(who!=='all'&&Number(who)!==pi)return;const amount=Number(amounts[pi]?.total||0);if(paid(ri,pi)){yes+=amount;yesCount++}else{no+=amount;noCount++}})});
+ const summary=document.createElement('div');summary.id='paymentReportSummary';summary.innerHTML='<h3>ملخص التحصيل</h3><div class="payment-summary"><div><small>✓ إجمالي المسدد ('+yesCount+' فاتورة)</small><strong>'+fmt(yes)+' ر.ي</strong></div><div><small>◷ إجمالي غير المسدد ('+noCount+' فاتورة)</small><strong>'+fmt(no)+' ر.ي</strong></div></div>';content.prepend(summary)}
+window.renderReports=function(){oldReports();appendReportPayments()};
+function refreshPaymentViews(){renderPaymentDashboard();if(!$('history').classList.contains('hidden')){const open=[...document.querySelectorAll('[id^="detail"]')].filter(el=>el.innerHTML.trim()).map(el=>Number(el.id.replace('detail','')));renderHistory();open.forEach(i=>window.showDetails(i))}if(!$('reports').classList.contains('hidden'))window.renderReports()}
+renderPaymentDashboard();
+})();
 </script></body></html>
